@@ -1,6 +1,3 @@
-// internal/store/store.go
-// Package store manages the Postgres connection pool and all event queries.
-// It is the only package that knows about the database schema.
 package store
 
 import (
@@ -13,28 +10,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store wraps a pgxpool.Pool and exposes typed methods for all database
-// operations. Callers never touch SQL directly — they go through Store.
 type Store struct {
 	pool *pgxpool.Pool
 }
 
-// New creates a Store backed by a connection pool pointed at the given DSN.
-// The pool is configured for GeoTrace's workload: mostly writes (ingest) with
-// periodic burst reads (dashboard time-window queries).
-//
-// DSN format: "postgres://user:pass@host:5432/dbname?sslmode=disable"
+// creates a Store backed by a connection pool
 func New(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse dsn: %w", err)
 	}
 
-	// Pool sizing rationale:
-	// - MinConns=2: keep two connections warm so the first ingest after idle
-	//   doesn't pay connection setup latency.
-	// - MaxConns=10: enough for concurrent dashboard scrubber requests + ingest
-	//   writes without exhausting a $6 Postgres instance.
+	// keep 2 connections warm while providing enough for db reads
 	cfg.MinConns = 2
 	cfg.MaxConns = 10
 
@@ -50,28 +37,22 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{pool: pool}, nil
 }
 
-// Close releases all pool connections. Call on shutdown.
+// releases all pool connections
 func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// Pool returns the underlying pgxpool.Pool for use by packages that need
-// direct pool access (e.g. the migration runner).
+// returns the underlying pgxpool.Pool
 func (s *Store) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
-// Ping verifies the database connection is alive. Used by the health endpoint.
+// verifies the database connection is alive
 func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
-// Insert writes a single Event to the events table.
-// The event's IP is stored as INET — pgx handles net.IP ↔ INET transparently.
-// ID and CreatedAt are set by Postgres defaults and scanned back into e.
-//
-// Insert is called from the enricher goroutine after geo lookup completes.
-// It must be fast — the enricher channel backs up if inserts are slow.
+// writes a single Event to the events table
 func (s *Store) Insert(ctx context.Context, e *Event) error {
 	const q = `
 		INSERT INTO events (
@@ -86,7 +67,7 @@ func (s *Store) Insert(ctx context.Context, e *Event) error {
 		RETURNING id, created_at`
 
 	return s.pool.QueryRow(ctx, q,
-		e.IP,          // $1  INET — pgx encodes net.IP correctly
+		e.IP,          // $1  INET; pgx encodes net.IP correctly
 		e.Lat,         // $2  DOUBLE PRECISION, nullable
 		e.Lon,         // $3  DOUBLE PRECISION, nullable
 		e.City,        // $4  TEXT, nullable
@@ -100,11 +81,7 @@ func (s *Store) Insert(ctx context.Context, e *Event) error {
 	).Scan(&e.ID, &e.CreatedAt)
 }
 
-// Query returns events within the time window defined by f.
-// Results are ordered newest-first (matching the DESC index).
-// The SubnetFilter, if set, adds: AND ip << $N — uses the GIST index.
-//
-// This is the hot path for the dashboard time scrubber.
+// returns events within the time window defined by f, DESC
 func (s *Store) Query(ctx context.Context, f QueryFilter) ([]Event, error) {
 	var (
 		args   []any
@@ -112,7 +89,7 @@ func (s *Store) Query(ctx context.Context, f QueryFilter) ([]Event, error) {
 		idx    = 1 // Postgres $N placeholder counter
 	)
 
-	// Time window — always required
+	// time window, required
 	wheres = append(wheres, fmt.Sprintf("created_at >= $%d", idx))
 	args = append(args, f.From)
 	idx++
@@ -121,16 +98,14 @@ func (s *Store) Query(ctx context.Context, f QueryFilter) ([]Event, error) {
 	args = append(args, f.To)
 	idx++
 
-	// Optional country filter — uses idx_events_country_code
+	// optional country filter uses idx_events_country_code
 	if f.CountryCode != nil {
 		wheres = append(wheres, fmt.Sprintf("country_code = $%d", idx))
 		args = append(args, *f.CountryCode)
 		idx++
 	}
 
-	// Optional subnet filter — uses idx_events_ip_gist
-	// Postgres << operator: "ip is contained within subnet"
-	// e.g. ip << '10.0.0.0/8'::inet returns true for any RFC1918 address
+	// optional subnet filter uses idx_events_ip_gist
 	if f.SubnetFilter != nil {
 		wheres = append(wheres, fmt.Sprintf("ip << $%d", idx))
 		args = append(args, f.SubnetFilter.String())
@@ -162,8 +137,7 @@ func (s *Store) Query(ctx context.Context, f QueryFilter) ([]Event, error) {
 	return pgx.CollectRows(rows, scanEvent)
 }
 
-// CountByCountry returns a map of country_code → request count
-// for the given time window. Used by the StatsBar component.
+// returns a map of country_code: request count
 func (s *Store) CountByCountry(ctx context.Context, f QueryFilter) (map[string]int, error) {
 	const q = `
 		SELECT
@@ -194,8 +168,7 @@ func (s *Store) CountByCountry(ctx context.Context, f QueryFilter) (map[string]i
 	return out, rows.Err()
 }
 
-// RecentCount returns the number of events in the last n seconds.
-// Used for the req/min sparkline in the StatsBar.
+// returns the number of events in the last n seconds
 func (s *Store) RecentCount(ctx context.Context, lastSeconds int) (int, error) {
 	const q = `
 		SELECT COUNT(*)
@@ -207,9 +180,7 @@ func (s *Store) RecentCount(ctx context.Context, lastSeconds int) (int, error) {
 	return count, err
 }
 
-// IsInSubnet is a helper that demonstrates the << INET operator via Go.
-// For direct Postgres subnet queries, use QueryFilter.SubnetFilter instead.
-// This is useful for application-level filtering after a Query call.
+// helper used in application-level filtering. Use QueryFilter.SubnetFilter for direct db queries
 func IsInSubnet(ip net.IP, cidr string) (bool, error) {
 	_, subnet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -218,14 +189,12 @@ func IsInSubnet(ip net.IP, cidr string) (bool, error) {
 	return subnet.Contains(ip), nil
 }
 
-// scanEvent is the pgx row scanner for the Event type.
-// It handles the INET→net.IP conversion that pgx provides automatically
-// when scanning into *net.IP — we just need to give it the right pointer type.
+// scanEvent is the pgx row scanner for the Event type
 func scanEvent(row pgx.CollectableRow) (Event, error) {
 	var e Event
 	err := row.Scan(
 		&e.ID,
-		&e.IP,          // pgx decodes INET → net.IP
+		&e.IP, // pgx decodes INET to net.IP
 		&e.Lat,
 		&e.Lon,
 		&e.City,

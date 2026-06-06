@@ -1,7 +1,3 @@
-// cmd/server/main.go
-// GeoTrace sidecar service entrypoint.
-// Initializes all components in dependency order, then blocks until
-// a SIGINT/SIGTERM signal triggers graceful shutdown.
 package main
 
 import (
@@ -14,18 +10,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/BennerG/geotrace/internal/config"
+	"github.com/BennerG/geotrace/internal/enricher"
+	"github.com/BennerG/geotrace/internal/ingest"
 	"github.com/BennerG/geotrace/internal/store"
 )
 
 func main() {
-	// Load .env file if present (dev convenience — ignored in production
-	// where env vars are set by systemd or the container runtime)
 	_ = godotenv.Load()
 
-	// Structured logging — slog is stdlib in Go 1.21+
+	// structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -43,11 +42,11 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Root context — cancelled on shutdown signal
+	// root context
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// ── Store ──────────────────────────────────────────────────────────────
+	// store
 	slog.Info("connecting to postgres")
 	st, err := store.New(ctx, cfg.DatabaseDSN)
 	if err != nil {
@@ -55,22 +54,33 @@ func run() error {
 	}
 	defer st.Close()
 
-	// ── Migrations ─────────────────────────────────────────────────────────
-	// Run on every startup — safe because migrate.go is idempotent.
-	// In production, swap this for a separate migration job if your team
-	// prefers explicit migration control.
+	// migrations
 	slog.Info("running migrations", "dir", cfg.MigrationsDir)
 	if err := store.Migrate(ctx, st.Pool(), cfg.MigrationsDir); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// ── HTTP server ────────────────────────────────────────────────────────
-	// Remaining components (enricher, WebSocket hub, ingest handler, REST API)
-	// are wired in subsequent steps. For now, a health endpoint confirms
-	// the service is running and Postgres is reachable.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		if err := st.Ping(ctx); err != nil {
+	// event channels
+	rawEvents := make(chan *store.Event, cfg.ChannelBuffer)
+	broadcast := make(chan *store.Event, cfg.ChannelBuffer)
+
+	// enricher
+	slog.Info("loading maxmind db", "path", cfg.MaxMindDBPath)
+	enc, err := enricher.New(cfg.MaxMindDBPath, st, rawEvents, broadcast, cfg.EnricherWorkers)
+	if err != nil {
+		return fmt.Errorf("enricher: %w", err)
+	}
+	defer enc.Close()
+
+	// router
+	r := chi.NewRouter()
+	r.Use(chimiddleware.RequestID)
+	r.Use(chimiddleware.RealIP)
+	r.Use(chimiddleware.Recoverer)
+
+	// health - confirms server is running and checks postgres connection
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "db unreachable", http.StatusServiceUnavailable)
 			return
 		}
@@ -78,35 +88,73 @@ func run() error {
 		fmt.Fprintf(w, `{"status":"ok","time":%q}`, time.Now().UTC().Format(time.RFC3339))
 	})
 
+	// ingest
+	ingestHandler := ingest.New(cfg.IngestAPIKey, rawEvents)
+	r.Post("/ingest", ingestHandler.ServeHTTP)
+
+	// REST API and WebSocket routes
+	// r.Get("/events", apiHandler.ServeHTTP)
+	// r.Get("/ws", wsHub.ServeHTTP)
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      mux,
+		Handler:      r,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Run server in a goroutine so we can wait for shutdown signal
-	serverErr := make(chan error, 1)
-	go func() {
+	// triggers graceful shutdown of all other components.
+	g, ctx := errgroup.WithContext(ctx)
+
+	// Enricher worker pool
+	g.Go(func() error {
+		slog.Info("enricher starting", "workers", cfg.EnricherWorkers)
+		return enc.Run(ctx)
+	})
+
+	// Broadcast channel drain
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case ev := <-broadcast:
+				slog.Debug("broadcast (no ws hub yet)",
+					"id", ev.ID,
+					"ip", ev.IP.String(),
+					"country", func() string {
+						if ev.CountryCode != nil {
+							return *ev.CountryCode
+						}
+						return "??"
+					}(),
+				)
+			}
+		}
+	})
+
+	// HTTP server
+	g.Go(func() error {
 		slog.Info("geotrace listening", "port", cfg.Port)
-		serverErr <- srv.ListenAndServe()
-	}()
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("server: %w", err)
+		}
+		return nil
+	})
 
-	// Block until shutdown signal or server error
-	select {
-	case err := <-serverErr:
-		return fmt.Errorf("server: %w", err)
-	case <-ctx.Done():
+	// Shutdown trigger — when ctx is cancelled (signal received), shut down
+	// the HTTP server which unblocks ListenAndServe above
+	g.Go(func() error {
+		<-ctx.Done()
 		slog.Info("shutdown signal received")
-	}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	})
 
-	// Graceful shutdown — give in-flight requests 15 seconds to finish
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	slog.Info("geotrace stopped cleanly")

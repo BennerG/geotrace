@@ -1,7 +1,3 @@
-// internal/store/migrate.go
-// Simple migration runner. Reads *.sql files from a directory in lexicographic
-// order and runs each in a transaction. Tracks applied migrations in a
-// schema_migrations table so reruns are safe (idempotent).
 package store
 
 import (
@@ -15,11 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Migrate applies all unapplied *.sql files from migrationsDir to the database.
-// Safe to call on every startup — already-applied migrations are skipped.
-// Migrations are applied in filename order, so use a numeric prefix (001_, 002_).
 func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) error {
-	// Ensure the tracking table exists
+	// ensure the tracking table exists
 	_, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			filename   TEXT        PRIMARY KEY,
@@ -29,7 +22,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) erro
 		return fmt.Errorf("migrate: create tracking table: %w", err)
 	}
 
-	// Read all .sql files from the migrations directory
+	// read all .sql files from the migrations directory
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("migrate: read dir %q: %w", migrationsDir, err)
@@ -57,7 +50,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) erro
 			return fmt.Errorf("migrate: read %q: %w", filename, err)
 		}
 
-		// Each migration runs in its own transaction
+		// each migration runs in its own transaction
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("migrate: begin tx for %q: %w", filename, err)
