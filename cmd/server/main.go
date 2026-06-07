@@ -20,6 +20,7 @@ import (
 	"github.com/BennerG/geotrace/internal/enricher"
 	"github.com/BennerG/geotrace/internal/ingest"
 	"github.com/BennerG/geotrace/internal/store"
+	"github.com/BennerG/geotrace/internal/ws"
 )
 
 func main() {
@@ -79,6 +80,8 @@ func run() error {
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Recoverer)
 
+	// API handlers
+	apiHandler := api.New(st)
 	// health - confirms server is running and checks postgres connection
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
@@ -88,9 +91,6 @@ func run() error {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","time":%q}`, time.Now().UTC().Format(time.RFC3339))
 	})
-
-	// API handler routes
-	apiHandler := api.New(st)
 	r.Get("/events", apiHandler.Events)
 	r.Get("/stats", apiHandler.Stats)
 
@@ -98,9 +98,9 @@ func run() error {
 	ingestHandler := ingest.New(cfg.IngestAPIKey, rawEvents)
 	r.Post("/ingest", ingestHandler.ServeHTTP)
 
-	// REST API and WebSocket routes
-	// r.Get("/events", apiHandler.ServeHTTP)
-	// r.Get("/ws", wsHub.ServeHTTP)
+	// websocket
+	hub := ws.NewHub(broadcast)
+	r.Get("/ws", hub.ServeHTTP)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -113,31 +113,16 @@ func run() error {
 	// triggers graceful shutdown of all other components.
 	g, ctx := errgroup.WithContext(ctx)
 
-	// Enricher worker pool
+	// enricher worker pool
 	g.Go(func() error {
 		slog.Info("enricher starting", "workers", cfg.EnricherWorkers)
 		return enc.Run(ctx)
 	})
 
-	// Broadcast channel drain
+	// broadcast channel drain
 	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case ev := <-broadcast:
-				slog.Debug("broadcast (no ws hub yet)",
-					"id", ev.ID,
-					"ip", ev.IP.String(),
-					"country", func() string {
-						if ev.CountryCode != nil {
-							return *ev.CountryCode
-						}
-						return "??"
-					}(),
-				)
-			}
-		}
+		slog.Info("ws hub starting")
+		return hub.Run(ctx)
 	})
 
 	// HTTP server
@@ -149,7 +134,7 @@ func run() error {
 		return nil
 	})
 
-	// Shutdown trigger — when ctx is cancelled (signal received), shut down
+	// shutdown trigger — when ctx is cancelled (signal received), shut down
 	// the HTTP server which unblocks ListenAndServe above
 	g.Go(func() error {
 		<-ctx.Done()
