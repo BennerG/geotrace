@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/BennerG/geotrace/internal/api"
 	"github.com/BennerG/geotrace/internal/config"
 	"github.com/BennerG/geotrace/internal/enricher"
 	"github.com/BennerG/geotrace/internal/ingest"
@@ -87,6 +88,11 @@ func run() error {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","time":%q}`, time.Now().UTC().Format(time.RFC3339))
 	})
+
+	// API handler routes
+	apiHandler := api.New(st)
+	r.Get("/events", apiHandler.Events)
+	r.Get("/stats", apiHandler.Stats)
 
 	// ingest
 	ingestHandler := ingest.New(cfg.IngestAPIKey, rawEvents)

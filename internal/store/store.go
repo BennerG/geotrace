@@ -173,7 +173,7 @@ func (s *Store) RecentCount(ctx context.Context, lastSeconds int) (int, error) {
 	const q = `
 		SELECT COUNT(*)
 		FROM events
-		WHERE created_at >= NOW() - ($1 || ' seconds')::INTERVAL`
+		WHERE created_at >= NOW() - make_interval(secs => $1)`
 
 	var count int
 	err := s.pool.QueryRow(ctx, q, lastSeconds).Scan(&count)
