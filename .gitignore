@@ -2,10 +2,11 @@
 bin/
 *.exe
 
-# Environment — never commit secrets
+# Environment
 .env
+.env.local
 
-# MaxMind database — large binary, not in version control
+# MaxMind database
 *.mmdb
 
 # Go test cache
@@ -18,3 +19,10 @@ tmp/
 .idea/
 .vscode/
 *.swp
+
+# React build output
+cmd/server/dist/
+!cmd/server/dist/.gitkeep
+
+# Node modules
+web/node_modules/

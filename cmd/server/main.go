@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,6 +103,19 @@ func run() error {
 	// websocket
 	hub := ws.NewHub(broadcast)
 	r.Get("/ws", hub.ServeHTTP)
+
+	// static frontend
+	if _, err := dist.Open("dist/index.html"); err == nil {
+		staticFS, _ := fs.Sub(dist, "dist")
+		fileServer := http.FileServer(http.FS(staticFS))
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			path := strings.TrimPrefix(r.URL.Path, "/")
+			if _, err := staticFS.Open(path); err != nil {
+				r.URL.Path = "/"
+			}
+			fileServer.ServeHTTP(w, r)
+		})
+	}
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
