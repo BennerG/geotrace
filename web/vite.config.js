@@ -19,5 +19,15 @@ export default defineConfig({
   build: {
     outDir: '../cmd/server/dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'mapbox':       ['mapbox-gl'],
+          'styled':       ['styled-components'],
+          'react-vendor': ['react', 'react-dom'],
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1900
   },
 })
