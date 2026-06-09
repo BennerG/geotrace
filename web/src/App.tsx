@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createGlobalStyle } from 'styled-components'
 import { Map } from './components/Map'
 import { FeatureCollection } from './types'
+import { TimeScrubber } from './components/TimeScrubber'
 
 const GlobalStyle = createGlobalStyle`
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -98,8 +99,10 @@ const hourAgo = () => new Date(Date.now() - 3600_000).toISOString()
 
 export default function App() {
   const [historicalData, setHistoricalData] = useState<FeatureCollection | null>(null)
+  const [loading, setLoading] = useState(false)
 
   const fetchHistorical = useCallback(async (from: string, to: string) => {
+    setLoading(true)
     try {
       const res = await fetch(`/events?from=${from}&to=${to}`)
       if (!res.ok) return
@@ -107,6 +110,8 @@ export default function App() {
       setHistoricalData(data)
     } catch {
       // network error — silently ignore, map shows live data
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -121,6 +126,7 @@ export default function App() {
       <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
         <Header />
         <Map historicalData={historicalData} />
+        <TimeScrubber onFetch={fetchHistorical} loading={loading} />
       </div>
     </>
   )
