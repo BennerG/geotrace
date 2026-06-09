@@ -72,20 +72,24 @@ const GlobalStyle = createGlobalStyle`
     margin-top: 6px;
     opacity: 0.7;
   }
-
-  /* Pulse ring animation on live events */
+  
   .pulse-ring {
-    width: 16px;
-    height: 16px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
-    border: 2px solid var(--green);
-    animation: pulse-out 1.2s ease-out forwards;
     pointer-events: none;
+    animation: pulse-out 1.8s ease-out forwards;
   }
 
   @keyframes pulse-out {
-    0%   { transform: scale(0.5); opacity: 1; }
-    100% { transform: scale(3);   opacity: 0; }
+    0% {
+      box-shadow: 0 0 0 0px rgba(34, 170, 114, 0.8);
+      opacity: 1;
+    }
+    100% {
+      box-shadow: 0 0 0 20px rgba(34, 170, 114, 0);
+      opacity: 0;
+    }
   }
 `
 

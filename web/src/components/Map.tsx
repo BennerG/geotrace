@@ -20,17 +20,19 @@ interface Props {
 export function Map({ historicalData }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  const historicalRef = useRef<FeatureCollection | null>(null)
   const liveFeatures = useRef<GeoJSONFeature[]>([])
   const pulseMarkers = useRef<mapboxgl.Marker[]>([])
+  const styleReadyRef = useRef(false)
 
-  // initialise map once
+  // initialize map once
   useEffect(() => {
     if (!containerRef.current) return
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: [0, 20],
+      center: [-90, 30],
       zoom: 1.8,
       projection: 'globe',
       attributionControl: false,
@@ -40,6 +42,7 @@ export function Map({ historicalData }: Props) {
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left')
 
     map.on('style.load', () => {
+      styleReadyRef.current = true
       // atmosphere / fog on globe view
       map.setFog({
         color: 'rgb(10, 14, 26)',
@@ -117,6 +120,11 @@ export function Map({ historicalData }: Props) {
         clusterRadius: 40,
       })
 
+      if (historicalRef.current) {
+        const src = map.getSource(HIST_SOURCE) as mapboxgl.GeoJSONSource
+        src.setData(historicalRef.current)
+      }
+
       map.addLayer({
         id: 'hist-clusters',
         type: 'circle',
@@ -166,14 +174,34 @@ export function Map({ historicalData }: Props) {
         },
       })
 
+      // —— Click cluster —————————————————————————————————————————————————
+      const addClusterClickHandler = (source: string, layerId: string) => {
+        map.on('click', layerId, (e) => {
+          if (!e.features?.length) return
+          const feature = e.features[0]
+          const clusterId = feature.properties?.cluster_id
+          const src = map.getSource(source) as mapboxgl.GeoJSONSource
+          src.getClusterExpansionZoom(clusterId, (err, zoom) => {
+            if (err) return
+            const coords = (feature.geometry as GeoJSON.Point).coordinates as [number, number]
+            map.easeTo({ center: coords, zoom: Number(zoom) + 0.5 })
+          })
+        })
+        map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
+      }
+
+      addClusterClickHandler(LIVE_SOURCE, 'live-clusters')
+      addClusterClickHandler(HIST_SOURCE, 'hist-clusters')
+
       // ── Click popup ───────────────────────────────────────────────────
       const popup = new mapboxgl.Popup({
-        closeButton: false,
+        closeButton: true,
         closeOnClick: true,
         className: 'geotrace-popup',
       })
 
-      const showPopup = (e: mapboxgl.MapLayerMouseEvent) => {
+      const showPopup = (e: mapboxgl.MapMouseEvent) => {
         if (!e.features?.length) return
         const f = e.features[0]
         const props = f.properties as Record<string, string | number>
@@ -206,10 +234,22 @@ export function Map({ historicalData }: Props) {
 
   // update historical layer when data changes
   useEffect(() => {
+    historicalRef.current = historicalData
+    if (!historicalData) return 
+
     const map = mapRef.current
-    if (!map || !map.isStyleLoaded()) return
-    const src = map.getSource(HIST_SOURCE) as mapboxgl.GeoJSONSource | undefined
-    src?.setData(historicalData ?? emptyCollection())
+    if (!map) return
+
+    const apply = () => {
+      const src = map.getSource(HIST_SOURCE) as mapboxgl.GeoJSONSource | undefined
+      src?.setData(historicalData)
+    }
+
+    if (styleReadyRef.current) {
+      apply()
+    } else {
+      map.once('style.load', apply)
+    }
   }, [historicalData])
 
   // handle incoming live event
@@ -230,7 +270,7 @@ export function Map({ historicalData }: Props) {
     const el = document.createElement('div')
     el.className = 'pulse-ring'
 
-    const marker = new mapboxgl.Marker({ element: el })
+    const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
       .setLngLat([lon, lat])
       .addTo(map)
 
