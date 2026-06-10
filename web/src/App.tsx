@@ -94,6 +94,61 @@ const GlobalStyle = createGlobalStyle`
       opacity: 0;
     }
   }
+
+  .popup-summary-loading {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    font-style: italic;
+    margin-top: 6px;
+  }
+
+  .popup-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 6px 0;
+  }
+
+  .popup-section-label {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+
+  .popup-path-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 3px;
+  }
+
+  .popup-method {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--green);
+    width: 32px;
+    flex-shrink: 0;
+  }
+
+  .popup-path-text {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .popup-count {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
 `
 
 const now = () => new Date().toISOString()

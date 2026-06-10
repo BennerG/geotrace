@@ -1,6 +1,3 @@
-// internal/store/event.go
-// Package store owns the canonical Event type and all database interactions.
-// Every other package imports this type — it is the shared language of GeoTrace.
 package store
 
 import (
@@ -8,15 +5,12 @@ import (
 	"time"
 )
 
-// Event represents a single tracked HTTP request, fully geo-enriched.
-// This struct maps 1:1 to the events table. The zero value of optional fields
-// (lat/lon/city/etc.) indicates a failed or skipped geo lookup — typically
-// because the IP is private/loopback or the MaxMind DB has no record.
+// Event represents a single tracked HTTP request, fully geo-enriched
 type Event struct {
 	ID          int64     `json:"id"           db:"id"`
-	IP          net.IP    `json:"ip"           db:"ip"`           // INET in Postgres
-	Lat         *float64  `json:"lat"          db:"lat"`          // nil if geo lookup failed
-	Lon         *float64  `json:"lon"          db:"lon"`          // nil if geo lookup failed
+	IP          net.IP    `json:"ip"           db:"ip"`  // INET in Postgres
+	Lat         *float64  `json:"lat"          db:"lat"` // nil if geo lookup failed
+	Lon         *float64  `json:"lon"          db:"lon"` // nil if geo lookup failed
 	City        *string   `json:"city"         db:"city"`
 	Region      *string   `json:"region"       db:"region"`
 	Country     *string   `json:"country"      db:"country"`
@@ -29,17 +23,7 @@ type Event struct {
 }
 
 // IsPrivate reports whether the event's IP is a private/loopback/link-local
-// address. Private IPs are captured and stored but never geo-enriched — MaxMind
-// has no data for them and attempting a lookup wastes time.
-//
-// Equivalent Postgres check for queries:
-//
-//	WHERE ip << '10.0.0.0/8'::inet
-//	   OR ip << '172.16.0.0/12'::inet
-//	   OR ip << '192.168.0.0/16'::inet
-//	   OR ip << '127.0.0.0/8'::inet
-//	   OR ip << '::1/128'::inet
-//	   OR ip << 'fe80::/10'::inet
+// address. Private IPs are captured and stored but never geo-enriched
 func (e *Event) IsPrivate() bool {
 	return e.IP.IsPrivate() || e.IP.IsLoopback() || e.IP.IsLinkLocalUnicast()
 }
@@ -78,15 +62,15 @@ type GeoJSONGeometry struct {
 // EventProps is the properties object on each GeoJSON feature.
 // These become available in Mapbox GL JS expressions and popups.
 type EventProps struct {
-	ID          int64   `json:"id"`
-	City        string  `json:"city"`
-	Country     string  `json:"country"`
-	CountryCode string  `json:"country_code"`
-	Path        string  `json:"path"`
-	Method      string  `json:"method"`
-	StatusCode  int     `json:"status_code"`
-	CreatedAt   string  `json:"created_at"` // RFC3339 string for JS Date parsing
-	IP          string  `json:"ip"`         // host(ip)::text — never expose raw INET to frontend
+	ID          int64  `json:"id"`
+	City        string `json:"city"`
+	Country     string `json:"country"`
+	CountryCode string `json:"country_code"`
+	Path        string `json:"path"`
+	Method      string `json:"method"`
+	StatusCode  int    `json:"status_code"`
+	CreatedAt   string `json:"created_at"` // RFC3339 string for JS Date parsing
+	IP          string `json:"ip"`         // host(ip)::text — never expose raw INET to frontend
 }
 
 // ToGeoJSON converts a fully-enriched Event to a GeoJSON Feature.
@@ -101,7 +85,7 @@ func (e *Event) ToGeoJSON() *GeoJSONFeature {
 		Path:      e.Path,
 		Method:    e.Method,
 		CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
-		IP:        e.IP.String(),
+		IP:        normalizeIP(e.IP),
 	}
 	if e.City != nil {
 		props.City = *e.City
@@ -124,4 +108,11 @@ func (e *Event) ToGeoJSON() *GeoJSONFeature {
 		},
 		Props: props,
 	}
+}
+
+func normalizeIP(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.String()
 }

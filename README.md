@@ -10,6 +10,13 @@ DATABASE_URL=postgres://geotrace:password@localhost:5432/geotrace
 
 # check events table
 psql $DATABASE_URL -c "SELECT id, host(ip), country_code, path, created_at FROM events ORDER BY id DESC LIMIT 5;"
+
+# check summary for ip - replace generic ip with target ip
+psql $DATABASE_URL -c "SELECT method, path, COUNT(*) AS count \
+FROM events \
+WHERE ip = '8.8.8.8'::inet \
+GROUP BY method, path \
+ORDER BY count DESC;"
 ```
 
 ### curl commands

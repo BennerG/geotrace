@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -94,6 +95,33 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		ReqPerMin:     recentCount,
 		TotalInWindow: total,
 	})
+}
+
+func (h *Handler) Summary(w http.ResponseWriter, r *http.Request) {
+	ip := r.URL.Query().Get("ip")
+	if ip == "" {
+		http.Error(w, "ip param required", http.StatusBadRequest)
+		return
+	}
+
+	// validate ip format
+	if net.ParseIP(ip) == nil {
+		http.Error(w, "invalid ip address", http.StatusBadRequest)
+		return
+	}
+
+	paths, err := h.st.SummaryByIP(r.Context(), ip)
+	if err != nil {
+		slog.Error("api: summary by ip failed", "ip", ip, "err", err)
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+
+	if paths == nil {
+		paths = []store.PathCount{}
+	}
+
+	writeJSON(w, paths)
 }
 
 func parseWindow(r *http.Request) (from, to time.Time, ok bool) {

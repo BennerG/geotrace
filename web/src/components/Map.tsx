@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { GeoJSONFeature, FeatureCollection } from '../types'
+import { GeoJSONFeature, FeatureCollection, EventProps } from '../types'
 import { useWebSocket } from '../hooks/useWebSocket'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -40,6 +40,12 @@ export function Map({ historicalData }: Props) {
 
     map.addControl(new mapboxgl.NavigationControl(), 'bottom-right')
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left')
+    map.addControl(new CentroidControl(() => {
+      const all = [...liveFeatures.current, ...(historicalRef.current?.features ?? [])]
+      const center = computeCentroid(all)
+      if (!center) return
+      map.flyTo({ center, zoom: 4, duration: 1200 })
+    }), 'bottom-right')
 
     map.on('style.load', () => {
       styleReadyRef.current = true
@@ -201,22 +207,51 @@ export function Map({ historicalData }: Props) {
         className: 'geotrace-popup',
       })
 
-      const showPopup = (e: mapboxgl.MapMouseEvent) => {
+      const showPopup = async (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.GeoJSONFeature[]}) => {
         if (!e.features?.length) return
         const f = e.features[0]
-        const props = f.properties as Record<string, string | number>
+        const props = f.properties as EventProps
         const coords = (f.geometry as GeoJSON.Point).coordinates.slice() as [number, number]
-        const date = new Date(props.created_at as string).toLocaleString()
+        const date = new Date(props.created_at).toLocaleString()
 
         popup.setLngLat(coords).setHTML(`
           <div class="popup-inner">
-            <div class="popup-flag">${countryFlag(props.country_code as string)}</div>
+            <div class="popup-flag">${countryFlag(props.country_code)}</div>
             <div class="popup-city">${props.city || props.country || 'Unknown'}</div>
             <div class="popup-meta">${props.method} ${props.path}</div>
             <div class="popup-meta">${date}</div>
             <div class="popup-ip">${props.ip}</div>
+            <div class="popup-summary-loading">loading request summary…</div>
           </div>
         `).addTo(map)
+
+        try {
+          const res = await fetch(`/summary?ip=${encodeURIComponent(props.ip)}`)
+          if (!res.ok || !popup.isOpen()) return
+          const paths = await res.json() as Array<{ method: string; path: string; count: number }>
+
+          const rows = paths.slice(0, 5).map(p =>
+            `<div class="popup-path-row">
+              <span class="popup-method">${p.method}</span>
+              <span class="popup-path-text">${p.path}</span>
+              <span class="popup-count">${p.count}×</span>
+            </div>`
+          ).join('')
+
+          popup.setHTML(`
+            <div class="popup-inner">
+              <div class="popup-flag">${countryFlag(props.country_code)}</div>
+              <div class="popup-city">${props.city || props.country || 'Unknown'}</div>
+              <div class="popup-meta">${date}</div>
+              <div class="popup-ip">${props.ip}</div>
+              <div class="popup-divider"></div>
+              <div class="popup-section-label">top paths</div>
+              ${rows}
+            </div>
+          `)
+        } catch {
+          // summary fetch failed - do nothing, basic info already visible
+        }
       }
 
       map.on('click', 'live-points', showPopup)
@@ -291,4 +326,37 @@ function countryFlag(code: string): string {
   return String.fromCodePoint(
     ...code.toUpperCase().split('').map(c => 0x1F1E6 + c.charCodeAt(0) - 65)
   )
+}
+
+function computeCentroid(features: GeoJSONFeature[]): [number, number] | null {
+  const valid = features.filter(f => f.geometry?.coordinates?.length === 2)
+  if (!valid.length) return null
+  const sumLon = valid.reduce((s, f) => s + f.geometry.coordinates[0], 0)
+  const sumLat = valid.reduce((s, f) => s + f.geometry.coordinates[1], 0)
+  return [sumLon / valid.length, sumLat / valid.length]
+}
+
+class CentroidControl implements mapboxgl.IControl {
+  private container!: HTMLElement
+  private onClick: () => void
+
+  constructor(onClick: () => void) {
+    this.onClick = onClick
+  }
+
+  onAdd() {
+    this.container = document.createElement('div')
+    this.container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group'
+    const btn = document.createElement('button')
+    btn.title = 'Zoom to traffic centroid'
+    btn.style.cssText = 'font-size:16px; cursor:pointer;'
+    btn.innerHTML = '⊕'
+    btn.onclick = this.onClick
+    this.container.appendChild(btn)
+    return this.container
+  }
+
+  onRemove() {
+    this.container.remove()
+  }
 }

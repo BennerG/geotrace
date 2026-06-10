@@ -10,6 +10,7 @@ export default defineConfig({
       '/events': 'http://localhost:8090',
       '/stats': 'http://localhost:8090',
       '/health': 'http://localhost:8090',
+      '/summary': 'http://localhost:8090',
       '/ws': {
         target: 'ws://localhost:8090',
         ws: true,

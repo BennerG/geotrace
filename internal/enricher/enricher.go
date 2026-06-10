@@ -81,6 +81,11 @@ func (e *Enricher) runWorker(ctx context.Context, id int) error {
 
 // process geo-enriches a single event and writes it to Postgres
 func (e *Enricher) process(ctx context.Context, ev *store.Event) {
+	// store ip as IPv4
+	if v4 := ev.IP.To4(); v4 != nil {
+		ev.IP = v4
+	}
+
 	// skip geo lookup for private/loopback IPs
 	if !ev.IsPrivate() {
 		e.geoLookup(ev)

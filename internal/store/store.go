@@ -180,6 +180,39 @@ func (s *Store) RecentCount(ctx context.Context, lastSeconds int) (int, error) {
 	return count, err
 }
 
+type PathCount struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Count  int    `json:"count"`
+}
+
+// returns summary by IP
+func (s *Store) SummaryByIP(ctx context.Context, ip string) ([]PathCount, error) {
+	const q = `
+		SELECT method, path, COUNT(*) AS count
+		FROM events
+		WHERE ip = $1::inet
+		GROUP BY method, path
+		ORDER BY count DESC
+		LIMIT 20`
+
+	rows, err := s.pool.Query(ctx, q, ip)
+	if err != nil {
+		return nil, fmt.Errorf("store: summary by ip: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PathCount
+	for rows.Next() {
+		var pc PathCount
+		if err := rows.Scan(&pc.Method, &pc.Path, &pc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, pc)
+	}
+	return out, rows.Err()
+}
+
 // helper used in application-level filtering. Use QueryFilter.SubnetFilter for direct db queries
 func IsInSubnet(ip net.IP, cidr string) (bool, error) {
 	_, subnet, err := net.ParseCIDR(cidr)

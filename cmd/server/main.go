@@ -95,6 +95,7 @@ func run() error {
 	})
 	r.Get("/events", apiHandler.Events)
 	r.Get("/stats", apiHandler.Stats)
+	r.Get("/summary", apiHandler.Summary)
 
 	// ingest
 	ingestHandler := ingest.New(cfg.IngestAPIKey, rawEvents)
