@@ -3,6 +3,8 @@ import { createGlobalStyle } from 'styled-components'
 import { Map } from './components/Map'
 import { FeatureCollection } from './types'
 import { TimeScrubber } from './components/TimeScrubber'
+import { StatsBar } from './components/StatsBar'
+import { useStats } from './hooks/useStats'
 
 const GlobalStyle = createGlobalStyle`
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -100,8 +102,14 @@ const hourAgo = () => new Date(Date.now() - 3600_000).toISOString()
 export default function App() {
   const [historicalData, setHistoricalData] = useState<FeatureCollection | null>(null)
   const [loading, setLoading] = useState(false)
+  const [activeWindow, setActiveWindow] = useState({
+    from: hourAgo(),
+    to: now(),
+  })
+  const { stats, error: statsError } = useStats(activeWindow.from, activeWindow.to)
 
   const fetchHistorical = useCallback(async (from: string, to: string) => {
+    setActiveWindow({ from, to })
     setLoading(true)
     try {
       const res = await fetch(`/events?from=${from}&to=${to}`)
@@ -127,6 +135,7 @@ export default function App() {
         <Header />
         <Map historicalData={historicalData} />
         <TimeScrubber onFetch={fetchHistorical} loading={loading} />
+        <StatsBar stats={stats} error={statsError} />
       </div>
     </>
   )
