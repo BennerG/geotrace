@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -15,6 +16,7 @@ type Config struct {
 	EnricherWorkers int
 	ChannelBuffer   int
 	CORSOrigins     string
+	AllowedOrigins  []string
 }
 
 func Load() (*Config, error) {
@@ -42,6 +44,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: PORT %d is out of range", cfg.Port)
 	}
 
+	raw := getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8090")
+	cfg.AllowedOrigins = splitAndTrim(raw)
+
 	return cfg, nil
 }
 
@@ -62,4 +67,15 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

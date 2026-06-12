@@ -20,14 +20,6 @@ const (
 	sendBuffer     = 32
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // tighten this for production
-	},
-}
-
 type client struct {
 	hub  *Hub
 	conn *websocket.Conn
@@ -36,18 +28,24 @@ type client struct {
 
 // Hub maintains the set of active clients and broadcasts events to them.
 type Hub struct {
-	clients    map[*client]struct{}
-	broadcast  <-chan *store.Event
-	register   chan *client
-	unregister chan *client
+	clients        map[*client]struct{}
+	broadcast      <-chan *store.Event
+	register       chan *client
+	unregister     chan *client
+	allowedOrigins map[string]struct{}
 }
 
-func NewHub(broadcast <-chan *store.Event) *Hub {
+func NewHub(broadcast <-chan *store.Event, allowedOrigins []string) *Hub {
+	origins := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		origins[o] = struct{}{}
+	}
 	return &Hub{
-		clients:    make(map[*client]struct{}),
-		broadcast:  broadcast,
-		register:   make(chan *client),
-		unregister: make(chan *client),
+		clients:        make(map[*client]struct{}),
+		broadcast:      broadcast,
+		register:       make(chan *client),
+		unregister:     make(chan *client),
+		allowedOrigins: origins,
 	}
 }
 
@@ -90,6 +88,18 @@ func (h *Hub) Run(ctx context.Context) error {
 
 // ServeHTTP upgrades the HTTP connection to WebSocket and registers the client.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true // non-browser client
+			}
+			_, ok := h.allowedOrigins[origin]
+			return ok
+		},
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("ws: upgrade failed", "err", err)

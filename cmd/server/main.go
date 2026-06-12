@@ -102,7 +102,7 @@ func run() error {
 	r.Post("/ingest", ingestHandler.ServeHTTP)
 
 	// websocket
-	hub := ws.NewHub(broadcast)
+	hub := ws.NewHub(broadcast, cfg.AllowedOrigins)
 	r.Get("/ws", hub.ServeHTTP)
 
 	// static frontend
