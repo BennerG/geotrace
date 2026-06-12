@@ -41,14 +41,14 @@ func TestMiddleware_PassesThrough(t *testing.T) {
 }
 
 func TestMiddleware_CapturesStatusCode(t *testing.T) {
-	var capturedStatus int
+	done := make(chan int, 1)
 
 	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var p struct {
 			StatusCode int `json:"status_code"`
 		}
 		json.NewDecoder(r.Body).Decode(&p)
-		capturedStatus = p.StatusCode
+		done <- p.StatusCode
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer ingest.Close()
@@ -67,7 +67,7 @@ func TestMiddleware_CapturesStatusCode(t *testing.T) {
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, req)
 
-	time.Sleep(100 * time.Millisecond)
+	capturedStatus := <-done
 
 	if capturedStatus != http.StatusNotFound {
 		t.Errorf("want status 404 in payload, got %d", capturedStatus)
@@ -75,10 +75,10 @@ func TestMiddleware_CapturesStatusCode(t *testing.T) {
 }
 
 func TestMiddleware_SendsAPIKey(t *testing.T) {
-	var receivedKey string
+	done := make(chan string, 1)
 
 	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedKey = r.Header.Get("X-GeoTrace-Key")
+		done <- r.Header.Get("X-GeoTrace-Key")
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer ingest.Close()
@@ -94,7 +94,7 @@ func TestMiddleware_SendsAPIKey(t *testing.T) {
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, req)
 
-	time.Sleep(100 * time.Millisecond)
+	receivedKey := <-done
 
 	if receivedKey != "test-secret" {
 		t.Errorf("want X-GeoTrace-Key=test-secret, got %q", receivedKey)
@@ -102,10 +102,10 @@ func TestMiddleware_SendsAPIKey(t *testing.T) {
 }
 
 func TestMiddleware_ForwardsRealIP(t *testing.T) {
-	var receivedIP string
+	done := make(chan string, 1)
 
 	ingest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedIP = r.Header.Get("X-Real-IP")
+		done <- r.Header.Get("X-Real-IP")
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer ingest.Close()
@@ -121,7 +121,7 @@ func TestMiddleware_ForwardsRealIP(t *testing.T) {
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, req)
 
-	time.Sleep(100 * time.Millisecond)
+	receivedIP := <-done
 
 	if receivedIP != "203.0.113.5" {
 		t.Errorf("want X-Real-IP=203.0.113.5, got %q", receivedIP)
