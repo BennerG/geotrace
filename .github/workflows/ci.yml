@@ -50,14 +50,22 @@ jobs:
           source: geotrace-server
           target: /home/deploy/
 
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          cat << 'SSHKEY' > ~/.ssh/deploy_key
+          ${{ secrets.SSH_KEY }}
+          SSHKEY
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DROPLET_IP }} >> ~/.ssh/known_hosts
+          wc -c < ~/.ssh/deploy_key
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@${{ secrets.DROPLET_IP }} "whoami"
+
       - name: Deploy and restart service
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: deploy
-          key: ${{ secrets.SSH_KEY }}
-          script: |
-            sudo cp /home/deploy/geotrace-server /usr/local/bin/geotrace-server
-            sudo chmod +x /usr/local/bin/geotrace-server
-            sudo systemctl restart geotrace
-            sudo systemctl status geotrace --no-pager
+        run: |
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=no -i ~/.ssh/deploy_key deploy@${{ secrets.DROPLET_IP }} \
+            "sudo /usr/bin/systemctl stop geotrace && \
+            sudo /usr/bin/cp /home/deploy/geotrace-server /usr/local/bin/geotrace-server && \
+            sudo /usr/bin/chmod +x /usr/local/bin/geotrace-server && \
+            sudo /usr/bin/systemctl start geotrace && \
+            sudo /usr/bin/systemctl status geotrace --no-pager"
