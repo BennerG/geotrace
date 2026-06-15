@@ -1,0 +1,63 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.26"
+  NODE_VERSION: "24"
+
+jobs:
+  deploy:
+    name: Build and Deploy GeoTrace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Build Go binary
+        run: go build -o geotrace-server ./cmd/server
+
+      - name: Copy binary to droplet
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: deploy
+          key: ${{ secrets.SSH_KEY }}
+          source: geotrace-server
+          target: /home/deploy/
+
+      - name: Deploy and restart service
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: deploy
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            sudo cp /home/deploy/geotrace-server /usr/local/bin/geotrace-server
+            sudo chmod +x /usr/local/bin/geotrace-server
+            sudo systemctl restart geotrace
+            sudo systemctl status geotrace --no-pager
