@@ -6,13 +6,20 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type Config struct {
-	Endpoint string
-	APIKey   string
-	Timeout  time.Duration
+	Endpoint     string
+	APIKey       string
+	Timeout      time.Duration
+	AllowedPaths []string
+	RateLimit    rate.Limit
+	RateBurst    int
 }
 
 type payload struct {
@@ -28,13 +35,39 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 3 * time.Second
 	}
+	if cfg.RateLimit == 0 {
+		cfg.RateLimit = rate.Limit(10)
+	}
+	if cfg.RateBurst == 0 {
+		cfg.RateBurst = 20
+	}
+	if len(cfg.AllowedPaths) < 1 {
+		cfg.AllowedPaths = []string{"/"}
+	}
 
 	client := &http.Client{Timeout: cfg.Timeout}
+
+	var limiters sync.Map
+	getLimiter := func(ip string) *rate.Limiter {
+		v, _ := limiters.LoadOrStore(ip, rate.NewLimiter(cfg.RateLimit, cfg.RateBurst))
+		return v.(*rate.Limiter)
+	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rw, r)
+
+			if !contains(cfg.AllowedPaths, r.URL.Path) {
+				return
+			}
+
+			ip := realIP(r)
+
+			if !getLimiter(ip).Allow() {
+				slog.Debug("geotrace: rate limit exceeded", "ip", ip)
+				return
+			}
 
 			p := payload{
 				Path:       r.URL.Path,
@@ -42,7 +75,6 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 				StatusCode: rw.status,
 				UserAgent:  r.UserAgent(),
 			}
-			ip := realIP(r)
 
 			go send(client, cfg, p, ip)
 		})
@@ -128,4 +160,13 @@ func splitHostPort(addr string) (string, string, error) {
 		}
 	}
 	return addr, "", nil
+}
+
+func contains(list []string, str string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s, str) {
+			return true
+		}
+	}
+	return false
 }
