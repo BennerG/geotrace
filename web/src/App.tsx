@@ -230,6 +230,22 @@ function Header() {
         live request map
       </span>
       <LiveDot />
+      <a href="https://bennerg.com"
+        style={{
+          marginLeft: 'auto',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '11px',
+          color: 'var(--text-dim)',
+          letterSpacing: '0.04em',
+          textDecoration: 'none',
+          pointerEvents: 'all',
+          transition: 'color 0.15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+        >
+          ← bennerg.com
+      </a>
     </div>
   )
 }

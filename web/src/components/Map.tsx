@@ -202,7 +202,7 @@ export function Map({ historicalData }: Props) {
 
       // ── Click popup ───────────────────────────────────────────────────
       const popup = new mapboxgl.Popup({
-        closeButton: true,
+        closeButton: false,
         closeOnClick: true,
         className: 'geotrace-popup',
       })
