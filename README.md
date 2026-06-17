@@ -1,5 +1,7 @@
 # GeoTrace
 
+Real-time visitor geolocation map: [live demo](https://geotrace.bennerg.com)
+
 A self-hosted request geo-analytics service. Embed one middleware line in any Go HTTP server and get a live map of where your traffic is coming from.
 
 ![GeoTrace Map](docs/images/geotrace-map.png)
