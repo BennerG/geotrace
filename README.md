@@ -107,6 +107,41 @@ Time parameters are RFC3339 strings: `2026-01-01T00:00:00Z`
 
 ## Postgres notes
 
+### Set pg_cron job to delete stale data
+
+> **pg_cron requires superuser privileges to install.** Postgres superuser must run before deploying: `CREATE EXTENSION IF NOT EXISTS pg_cron;`
+
+```bash
+# Install postgresql-16-cron if needed
+sudo apt-get update \
+  && sudo apt-get install -y postgresql-16-cron \
+  && sudo rm -rf /var/lib/apt/lists/*
+
+# Update postgresql.conf (bare-metal path shown; adjust for your install)
+sudo nano /etc/postgresql/16/main/postgresql.conf
+# add or update:
+#   shared_preload_libraries = 'pg_cron'
+#   cron.database_name = 'geotrace'
+
+sudo systemctl restart postgresql
+```
+
+Connect as super user `sudo -u postgres psql -d geotrace`
+
+```sql
+-- create extension (one-time, superuser only)
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- schedule nightly retention job
+SELECT cron.schedule('delete-old-events', '0 3 * * *',
+  $$DELETE FROM events WHERE created_at < NOW() - INTERVAL '30 days'$$);
+
+-- verify
+SELECT * FROM cron.job;
+```
+
+### INET type
+
 The `ip` column uses Postgres `INET` type rather than `TEXT`, which enables subnet comparison operators:
 
 ```sql
@@ -224,6 +259,5 @@ curl -X POST localhost:8090/ingest \
 - pprof endpoint on internal port for goroutine and heap profiling in production
 - CORS origin restriction from \* to specific domain in production
 - Rate limiting on `/ingest` to prevent event flooding
-- Retention policy — Postgres `DELETE FROM events WHERE created_at < NOW() - INTERVAL '90 days'` as a cron job
 - Light map style toggle (Mapbox `light-v11`)
 - Export events to CSV from the dashboard time window

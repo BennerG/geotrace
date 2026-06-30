@@ -1,49 +1,25 @@
-BINARY     := geotrace
-CMD        := ./cmd/server
-GOFLAGS    := -trimpath -ldflags="-s -w"
+.PHONY: dev dev-go dev-web build test vet lint
 
-.PHONY: dev build test lint migrate-up docker-db clean
-
-## dev: run the server with live reload (requires air: go install github.com/air-verse/air@latest)
 dev:
-	air -c .air.toml
+	docker-compose up -d --build
+	@echo "Waiting for postgres..."
+	@sleep 3
+	@$(MAKE) -j2 dev-go dev-web
 
-## build: compile a production binary
+dev-go:
+	go run ./cmd/server 
+
+dev-web:
+	@cd web && npm run dev
+
 build:
-	go build $(GOFLAGS) -o bin/$(BINARY) $(CMD)
+	go build -o geotrace ./cmd/server
 
-## test: run all tests with race detector
 test:
-	go test -race -count=1 ./...
+	go test ./... -race
 
-## test-store: run only store package tests (no db required for unit tests)
-test-store:
-	go test -race -count=1 ./internal/store/...
+vet:
+	go vet ./...
 
-## lint: run golangci-lint (requires: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
 lint:
 	golangci-lint run ./...
-
-## docker-db: start a local Postgres instance for development
-docker-db:
-	docker run --rm -d \
-		--name geotrace-postgres \
-		-e POSTGRES_USER=geotrace \
-		-e POSTGRES_PASSWORD=password \
-		-e POSTGRES_DB=geotrace \
-		-p 5432:5432 \
-		postgres:16-alpine
-	@echo "Postgres ready on localhost:5432"
-	@echo "DSN: postgres://geotrace:password@localhost:5432/geotrace?sslmode=disable"
-
-## docker-db-stop: stop the local Postgres instance
-docker-db-stop:
-	docker stop geotrace-postgres
-
-## clean: remove build artifacts
-clean:
-	rm -rf bin/
-
-## help: list all targets
-help:
-	@grep -E '^## ' Makefile | sed 's/## //'
