@@ -4,23 +4,18 @@ import { StatsResponse } from '../types'
 export function useStats(from: string, to: string, intervalMs = 15000) {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [error, setError] = useState(false)
-  const fromRef = useRef(from)
-  const toRef = useRef(to)
-
-  useEffect(() => {
-    fromRef.current = from
-    toRef.current = to
-  }, [from, to])
+  const requestIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
+    const thisRequestId = ++requestIdRef.current
 
-    const fetch_ = async () => {
+    const fetchStats = async () => {
       try {
-        const res = await fetch(`/stats?from=${fromRef.current}&to=${toRef.current}`)
+        const res = await fetch(`/stats?from=${from}&to=${to}`)
         if (!res.ok) throw new Error()
         const data = await res.json() as StatsResponse
-        if (!cancelled) {
+        if (!cancelled && thisRequestId === requestIdRef.current) {
           setStats(data)
           setError(false)
         }
@@ -29,13 +24,13 @@ export function useStats(from: string, to: string, intervalMs = 15000) {
       }
     }
 
-    fetch_()
-    const id = setInterval(fetch_, intervalMs)
+    fetchStats()
+    const id = setInterval(fetchStats, intervalMs)
     return () => {
       cancelled = true
       clearInterval(id)
     }
-  }, [intervalMs])
+  }, [from, to, intervalMs])
 
   return { stats, error }
 }
